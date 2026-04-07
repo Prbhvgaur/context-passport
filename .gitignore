@@ -1,0 +1,16 @@
+.env
+.env.local
+.env.*.local
+node_modules
+dist
+coverage
+.turbo
+.DS_Store
+pnpm-lock.yaml
+*.log
+firebase-debug.log
+.vercel
+.idea
+.vscode
+release
+

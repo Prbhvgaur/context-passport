@@ -1,0 +1,14 @@
+{
+  "name": "@context-passport/extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "test": "jest --coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
+
