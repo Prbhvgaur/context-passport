@@ -1,0 +1,27 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 400px;
+  color: #e2e8f0;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 42%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.16), transparent 36%),
+    linear-gradient(165deg, #020617 0%, #0f172a 52%, #111827 100%);
+}
+
+* {
+  box-sizing: border-box;
+}

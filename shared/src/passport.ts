@@ -1,5 +1,5 @@
-import { PASSPORT_DIVIDER, PASSPORT_SECTION_DIVIDER } from './constants';
-import type { SessionPassport, SupportedPlatform } from './types';
+import { PASSPORT_DIVIDER, PASSPORT_SECTION_DIVIDER } from './constants.js';
+import type { SessionPassport, SupportedPlatform } from './types.js';
 
 export const formatPassport = (
   platform: SupportedPlatform,
@@ -36,4 +36,3 @@ export const formatPassport = (
     PASSPORT_DIVIDER,
   ].join('\n');
 };
-

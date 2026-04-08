@@ -50,6 +50,8 @@ export interface SessionRecord {
   tags: string[];
 }
 
+export type SessionSummary = Omit<SessionRecord, 'rawHistory' | 'passport'>;
+
 export interface UserPreferences {
   autoCapture: boolean;
   autoInject: boolean;
@@ -71,4 +73,3 @@ export interface UserProfile {
   totalResumes: number;
   preferences: UserPreferences;
 }
-

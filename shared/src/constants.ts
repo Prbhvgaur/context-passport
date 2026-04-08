@@ -1,4 +1,4 @@
-import type { UserPreferences } from './types';
+import type { UserPreferences } from './types.js';
 
 export const APP_NAME = 'ContextPassport';
 export const API_PREFIX = '/api/v1';
@@ -16,4 +16,3 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
 
 export const PASSPORT_DIVIDER = '═══════════════════════════════════';
 export const PASSPORT_SECTION_DIVIDER = '───────────────────────────────────';
-

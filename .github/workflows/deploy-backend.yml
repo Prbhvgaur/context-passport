@@ -1,0 +1,62 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm --filter @context-passport/backend exec jest --coverage --runInBand
+      - run: pnpm build
+      - run: pnpm add -g vercel
+      - name: Deploy to Vercel
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+          UPSTASH_REDIS_TOKEN: ${{ secrets.UPSTASH_REDIS_TOKEN }}
+          EXTENSION_CHROME_ID: ${{ secrets.EXTENSION_CHROME_ID }}
+        run: |
+          cd backend
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
+            -e FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            -e FIREBASE_CLIENT_EMAIL="$FIREBASE_CLIENT_EMAIL" \
+            -e FIREBASE_PRIVATE_KEY="$FIREBASE_PRIVATE_KEY" \
+            -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+            -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+            -e UPSTASH_REDIS_URL="$UPSTASH_REDIS_URL" \
+            -e UPSTASH_REDIS_TOKEN="$UPSTASH_REDIS_TOKEN" \
+            -e EXTENSION_CHROME_ID="$EXTENSION_CHROME_ID")
+          echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: curl --fail "${{ steps.deploy.outputs.url }}/api/v1/health"
+      - name: Comment deployment URL on commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments \
+            -f body="Backend deployed to ${{ steps.deploy.outputs.url }}"
+

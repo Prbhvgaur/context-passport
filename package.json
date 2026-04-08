@@ -7,19 +7,25 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "node scripts/root-build.mjs",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "icons": "tsx scripts/generate-icons.ts",
+    "zip:extension": "tsx scripts/zip-extension.ts",
     "audit": "pnpm audit --prod",
+    "postinstall": "node scripts/vercel-postinstall.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^0.1.72",
+    "archiver": "^7.0.1",
     "@eslint/js": "^9.24.0",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.14.1",
+    "@vercel/ncc": "^0.38.4",
     "@typescript-eslint/eslint-plugin": "^8.29.0",
     "@typescript-eslint/parser": "^8.29.0",
     "dotenv-cli": "^8.0.0",
@@ -32,10 +38,22 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.29.0"
   },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md,css}": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@firebase/util",
+      "@napi-rs/canvas",
+      "@scarf/scarf",
+      "esbuild",
+      "protobufjs",
+      "unrs-resolver"
+    ]
   }
 }
-

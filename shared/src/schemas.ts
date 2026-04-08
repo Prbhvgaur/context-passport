@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SUPPORTED_PLATFORMS } from './types';
+import { SUPPORTED_PLATFORMS } from './types.js';
 
 export const sessionMessageSchema = z.object({
   role: z.enum(['user', 'assistant', 'system']),
@@ -66,4 +66,3 @@ export type UpdateSessionInput = z.infer<typeof updateSessionSchema>;
 export type PaginationInput = z.infer<typeof paginationSchema>;
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 export type CompressSessionInput = z.infer<typeof compressSessionSchema>;
-
