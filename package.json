@@ -47,6 +47,9 @@
     ]
   },
   "pnpm": {
+    "overrides": {
+      "@tootallnate/once": "^3.0.1"
+    },
     "onlyBuiltDependencies": [
       "@firebase/util",
       "@napi-rs/canvas",

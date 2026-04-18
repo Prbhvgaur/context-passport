@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
-import { getGoogleAccessToken } from './chrome';
+import { getGoogleAccessToken, isExtensionApiAvailable } from './chrome';
+import { createPreviewAuthPayload } from './preview-runtime';
 
 let firebaseApp: FirebaseApp | null = null;
 
@@ -24,6 +25,10 @@ const getFirebaseApp = () => {
 };
 
 export const signInWithGoogle = async () => {
+  if (!isExtensionApiAvailable()) {
+    return createPreviewAuthPayload();
+  }
+
   const accessToken = await getGoogleAccessToken();
   const auth = getAuth(getFirebaseApp());
   const credential = GoogleAuthProvider.credential(null, accessToken);

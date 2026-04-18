@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { clsx } from 'clsx';
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type {
   SessionPassport,
   SessionSummary,
@@ -6,9 +7,20 @@ import type {
   UserPreferences,
   UserProfile,
 } from '@context-passport/shared';
-import { DEFAULT_PREFERENCES } from '@context-passport/shared';
-import { Bot, Download, LogOut, RefreshCcw, Save, Search, Settings, Sparkles, Trash2 } from 'lucide-react';
-import { sendMessage } from '../utils/chrome';
+import { APP_NAME, DEFAULT_PREFERENCES, SUPPORTED_PLATFORMS } from '@context-passport/shared';
+import {
+  ArrowRight,
+  Bot,
+  Download,
+  LogOut,
+  RefreshCcw,
+  Save,
+  Search,
+  Settings,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
+import { isExtensionApiAvailable, sendMessage } from '../utils/chrome';
 import { signInWithGoogle } from '../utils/firebase';
 import { buildSessionMarkdown, triggerDownload } from '../utils/session-export';
 
@@ -26,7 +38,6 @@ interface ToastState {
 interface RuntimeResponse<T> {
   success: boolean;
   data: T;
-  error?: string;
 }
 
 type SessionDetail = SessionSummary & {
@@ -34,20 +45,33 @@ type SessionDetail = SessionSummary & {
   rawHistory: Array<{ role: string; content: string }>;
 };
 
-const platformOptions: Array<SupportedPlatform | 'all'> = [
-  'all',
-  'claude',
-  'chatgpt',
-  'gemini',
-  'perplexity',
-  'copilot',
-  'grok',
-];
+const previewMode = !isExtensionApiAvailable();
+const emptyState: AppState = { user: null, sessions: [], preferences: DEFAULT_PREFERENCES };
+const platformOptions: Array<SupportedPlatform | 'all'> = ['all', ...SUPPORTED_PLATFORMS];
+const platformMeta: Record<SupportedPlatform, { label: string; short: string; tone: string }> = {
+  claude: { label: 'Claude', short: 'Cl', tone: 'from-orange-400/25 to-orange-200/10 text-orange-100' },
+  chatgpt: { label: 'ChatGPT', short: 'Cg', tone: 'from-emerald-400/25 to-emerald-200/10 text-emerald-100' },
+  gemini: { label: 'Gemini', short: 'Ge', tone: 'from-sky-400/25 to-sky-200/10 text-sky-100' },
+  perplexity: { label: 'Perplexity', short: 'Px', tone: 'from-cyan-400/25 to-cyan-200/10 text-cyan-100' },
+  copilot: { label: 'Copilot', short: 'Co', tone: 'from-indigo-400/25 to-indigo-200/10 text-indigo-100' },
+  grok: { label: 'Grok', short: 'Gr', tone: 'from-fuchsia-400/25 to-fuchsia-200/10 text-fuchsia-100' },
+};
 
-const emptyState: AppState = {
-  user: null,
-  sessions: [],
-  preferences: DEFAULT_PREFERENCES,
+const formatRelative = (value: string) => {
+  const diff = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+  const ranges: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+  ];
+
+  for (const [unit, size] of ranges) {
+    if (Math.abs(diff) >= size || unit === 'minute') {
+      return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(Math.round(diff / size), unit);
+    }
+  }
+
+  return 'just now';
 };
 
 export const PopupApp = () => {
@@ -56,17 +80,25 @@ export const PopupApp = () => {
   const [search, setSearch] = useState('');
   const [platformFilter, setPlatformFilter] = useState<SupportedPlatform | 'all'>('all');
   const [toast, setToast] = useState<ToastState | null>(null);
+  const deferredSearch = useDeferredValue(search);
 
-  const showToast = (nextToast: ToastState) => {
-    setToast(nextToast);
-    window.setTimeout(() => setToast(null), 2800);
+  const showToast = (next: ToastState) => {
+    setToast(next);
+    window.setTimeout(() => setToast(null), 2600);
   };
 
   const refreshState = async () => {
-    setLoading(true);
-    const response = await sendMessage<RuntimeResponse<AppState>>({ type: 'GET_APP_STATE' });
-    setState(response.data);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const response = await sendMessage<RuntimeResponse<AppState>>({ type: 'GET_APP_STATE' });
+      startTransition(() => {
+        setState(response.data);
+        setLoading(false);
+      });
+    } catch (error) {
+      setLoading(false);
+      showToast({ kind: 'error', message: error instanceof Error ? error.message : 'Refresh failed.' });
+    }
   };
 
   useEffect(() => {
@@ -78,101 +110,139 @@ export const PopupApp = () => {
   }, [state.preferences.theme]);
 
   const filteredSessions = useMemo(() => {
+    const query = deferredSearch.toLowerCase();
     return state.sessions.filter((session) => {
-      const matchesPlatform = platformFilter === 'all' ? true : session.platform === platformFilter;
-      const haystack = `${session.title} ${session.entities.projectName} ${session.tags.join(' ')}`.toLowerCase();
-      const matchesQuery = haystack.includes(search.toLowerCase());
-      return matchesPlatform && matchesQuery;
+      const platformMatch = platformFilter === 'all' || session.platform === platformFilter;
+      const haystack = `${session.title} ${session.entities.projectName} ${session.entities.nextStep} ${session.tags.join(' ')}`.toLowerCase();
+      return platformMatch && (!query || haystack.includes(query));
     });
-  }, [platformFilter, search, state.sessions]);
+  }, [deferredSearch, platformFilter, state.sessions]);
 
-  const stats = useMemo(() => {
-    return {
-      totalSessions: state.sessions.length,
-      platformsUsed: new Set(state.sessions.map((session) => session.platform)).size,
-    };
-  }, [state.sessions]);
+  const stats = useMemo(
+    () => ({
+      sessions: state.sessions.length,
+      resumes: state.user?.totalResumes ?? 0,
+      platforms: new Set(state.sessions.map((session) => session.platform)).size,
+    }),
+    [state.sessions, state.user],
+  );
+
+  const savePreferences = async (payload: Partial<UserPreferences>) => {
+    const preferences = { ...state.preferences, ...payload };
+    await sendMessage<RuntimeResponse<UserProfile>>({ type: 'UPDATE_PREFERENCES', payload: preferences });
+    setState((current) => ({
+      ...current,
+      preferences,
+      user: current.user ? { ...current.user, preferences } : current.user,
+    }));
+  };
 
   const handleSignIn = async () => {
-    try {
-      const auth = await signInWithGoogle();
-      await sendMessage<RuntimeResponse<UserProfile>>({ type: 'SET_AUTH', payload: auth });
-      await sendMessage<RuntimeResponse<SessionSummary[]>>({ type: 'FETCH_SESSIONS' });
-      await refreshState();
-      showToast({ kind: 'success', message: 'Signed in and synced successfully.' });
-    } catch (error) {
-      showToast({ kind: 'error', message: error instanceof Error ? error.message : 'Sign-in failed.' });
-    }
+    const auth = await signInWithGoogle();
+    await sendMessage<RuntimeResponse<UserProfile>>({ type: 'SET_AUTH', payload: auth });
+    await refreshState();
+    showToast({ kind: 'success', message: previewMode ? 'Preview unlocked.' : 'Signed in.' });
   };
 
-  const handleManualSave = async () => {
-    try {
-      await sendMessage<RuntimeResponse<SessionSummary>>({ type: 'SAVE_ACTIVE_TAB_CHAT' });
-      await refreshState();
-      showToast({ kind: 'success', message: 'Current chat saved.' });
-    } catch (error) {
-      showToast({ kind: 'error', message: error instanceof Error ? error.message : 'Save failed.' });
-    }
+  const handleSave = async () => {
+    await sendMessage<RuntimeResponse<SessionSummary>>({ type: 'SAVE_ACTIVE_TAB_CHAT' });
+    await refreshState();
+    showToast({ kind: 'success', message: previewMode ? 'Preview session captured.' : 'Current chat saved.' });
   };
 
-  const togglePreference = async (key: 'autoCapture' | 'autoInject') => {
-    const nextPreferences = {
-      ...state.preferences,
-      [key]: !state.preferences[key],
-    };
-    await sendMessage<RuntimeResponse<UserProfile>>({ type: 'UPDATE_PREFERENCES', payload: nextPreferences });
-    setState((current) => ({ ...current, preferences: nextPreferences }));
-  };
-
-  const handleExport = async (sessionId: string) => {
-    const response = await sendMessage<RuntimeResponse<SessionDetail>>({
-      type: 'GET_SESSION_DETAIL',
-      payload: { id: sessionId },
-    });
+  const handleExport = async (id: string) => {
+    const response = await sendMessage<RuntimeResponse<SessionDetail>>({ type: 'GET_SESSION_DETAIL', payload: { id } });
     const markdown = buildSessionMarkdown(response.data);
     triggerDownload(`${response.data.title.replace(/\s+/g, '-').toLowerCase()}.md`, markdown, 'text/markdown');
     showToast({ kind: 'success', message: 'Session exported.' });
   };
 
-  const handleDelete = async (sessionId: string) => {
-    await sendMessage<RuntimeResponse<SessionSummary[]>>({ type: 'DELETE_SESSION', payload: { id: sessionId } });
+  const handleResume = async (id: string) => {
+    await sendMessage<RuntimeResponse<string>>({ type: 'RESUME_SESSION', payload: { id } });
+    showToast({ kind: 'success', message: previewMode ? 'Passport generated.' : 'Passport injected.' });
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Delete this saved passport?')) {
+      return;
+    }
+
+    await sendMessage<RuntimeResponse<SessionSummary[]>>({ type: 'DELETE_SESSION', payload: { id } });
     await refreshState();
     showToast({ kind: 'success', message: 'Session deleted.' });
   };
 
-  const handleResume = async (sessionId: string) => {
-    await sendMessage<RuntimeResponse<string>>({ type: 'RESUME_SESSION', payload: { id: sessionId } });
-    showToast({ kind: 'success', message: 'Passport injected into the active chat.' });
-  };
+  const openOptions = () => {
+    if (globalThis.chrome?.runtime?.openOptionsPage) {
+      void globalThis.chrome.runtime.openOptionsPage();
+      return;
+    }
 
-  const handleLogout = async () => {
-    await sendMessage<RuntimeResponse<null>>({ type: 'LOG_OUT' });
-    setState(emptyState);
+    window.open('/options.html', '_blank', 'noopener,noreferrer');
   };
 
   if (loading) {
-    return <div className="h-[600px] animate-pulse bg-slate-950/60" />;
+    return (
+      <div className="h-[600px] w-[400px] p-4">
+        <div className="premium-panel flex h-full flex-col gap-4 p-4">
+          <div className="h-24 rounded-[24px] bg-white/5" />
+          <div className="grid grid-cols-3 gap-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="metric-tile h-24 animate-pulse bg-white/5" />
+            ))}
+          </div>
+          <div className="flex-1 space-y-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="premium-elevated h-32 animate-pulse bg-white/5" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!state.user) {
     return (
-      <div className="flex h-[600px] w-[400px] flex-col justify-between p-6 text-slate-100">
-        <div>
-          <div className="mb-4 inline-flex rounded-full border border-electric/40 bg-electric/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-electric">
-            ContextPassport
+      <div className="h-[600px] w-[400px] p-4 text-[var(--text-primary)]">
+        <div className="premium-panel surface-grid relative flex h-full flex-col justify-between overflow-hidden p-5">
+          <div className="absolute right-[-40px] top-[-24px] h-40 w-40 rounded-full bg-[var(--accent-soft)] blur-3xl" />
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em]">
+                {APP_NAME}
+              </div>
+              <div className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em]">
+                {previewMode ? 'Preview' : 'Live'}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h1 className="text-[30px] font-semibold leading-[1.02] tracking-[-0.04em]">
+                Premium AI session continuity for serious builders.
+              </h1>
+              <p className="text-sm leading-6 text-[var(--text-secondary)]">
+                Turn raw conversations into resumable passports with project context, decisions, files, and next-step clarity.
+              </p>
+            </div>
+            <div className="grid gap-3">
+              {[
+                'Switch tools or accounts without losing momentum.',
+                'Resume with project state, not just a summary.',
+                'Use the browser preview to demo the full product surface.',
+              ].map((item) => (
+                <div key={item} className="premium-elevated flex items-center gap-3 p-3">
+                  <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+                  <span className="text-sm text-[var(--text-secondary)]">{item}</span>
+                </div>
+              ))}
+            </div>
           </div>
-          <h1 className="text-3xl font-semibold">Resume any AI session without losing your place.</h1>
-          <p className="mt-3 text-sm text-slate-300">
-            Capture context when you hit limits, switch tools, or change Google accounts. Your next AI session picks up exactly where the last one stopped.
-          </p>
-        </div>
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-panel backdrop-blur">
           <button
             onClick={() => void handleSignIn()}
-            className="flex w-full items-center justify-center gap-3 rounded-2xl bg-electric px-4 py-3 font-semibold text-white transition hover:bg-blue-400"
+            className="flex w-full items-center justify-center gap-3 rounded-[22px] bg-[linear-gradient(135deg,#3b82f6,#1d4ed8)] px-4 py-3.5 font-semibold text-white shadow-[0_18px_36px_rgba(37,99,235,0.28)]"
           >
             <Sparkles className="h-4 w-4" />
-            Sign in with Google
+            {previewMode ? 'Open interactive preview' : 'Sign in with Google'}
+            <ArrowRight className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -180,158 +250,274 @@ export const PopupApp = () => {
   }
 
   return (
-    <div className="relative h-[600px] w-[400px] overflow-hidden p-4 text-slate-100">
-      {toast ? (
-        <div
-          className={`absolute right-4 top-4 z-20 rounded-2xl px-4 py-3 text-sm shadow-panel ${
-            toast.kind === 'success' ? 'bg-emerald text-white' : 'bg-rose-500 text-white'
-          }`}
-        >
-          {toast.message}
-        </div>
-      ) : null}
-      <div className="flex h-full flex-col gap-4 overflow-hidden rounded-[28px] border border-white/10 bg-slate-900/80 p-4 shadow-panel backdrop-blur">
-        <header className="flex items-center justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-[0.3em] text-electric">Session Handoff</div>
-            <h1 className="text-lg font-semibold">Welcome back, {state.user.displayName.split(' ')[0]}</h1>
+    <div className="h-[600px] w-[400px] p-4 text-[var(--text-primary)]">
+      <div className="premium-panel surface-glow relative flex h-full flex-col overflow-hidden p-4">
+        {toast ? (
+          <div
+            className={clsx(
+              'absolute right-4 top-4 z-20 rounded-[18px] border px-4 py-3 text-sm backdrop-blur',
+              toast.kind === 'success' ? 'border-emerald-300/20 bg-emerald-400/15' : 'border-rose-300/20 bg-rose-400/15',
+            )}
+          >
+            {toast.message}
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => chrome.runtime.openOptionsPage()}
-              className="rounded-full border border-white/10 p-2 text-slate-300 transition hover:border-electric hover:text-white"
-            >
+        ) : null}
+
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em]">
+                {APP_NAME}
+              </div>
+              <div className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em]', previewMode ? 'bg-[var(--warning-soft)]' : 'bg-[var(--success-soft)]')}>
+                {previewMode ? 'Preview mode' : 'Extension live'}
+              </div>
+            </div>
+            <div className="mt-2 text-xs uppercase tracking-[0.28em] text-[var(--text-muted)]">Command surface</div>
+            <h1 className="mt-1 text-[19px] font-semibold tracking-[-0.03em]">Welcome back, {state.user.displayName.split(' ')[0]}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Avatar user={state.user} />
+            <button onClick={openOptions} className="rounded-full border border-[var(--surface-border)] bg-[var(--surface-elevated)] p-2">
               <Settings className="h-4 w-4" />
             </button>
             <button
-              onClick={() => void handleLogout()}
-              className="rounded-full border border-white/10 p-2 text-slate-300 transition hover:border-rose-400 hover:text-white"
+              onClick={() => void sendMessage<RuntimeResponse<null>>({ type: 'LOG_OUT' }).then(() => setState(emptyState))}
+              className="rounded-full border border-[var(--surface-border)] bg-[var(--surface-elevated)] p-2"
             >
               <LogOut className="h-4 w-4" />
             </button>
           </div>
-        </header>
+        </div>
 
-        <section className="grid grid-cols-2 gap-3">
-          <div className="rounded-2xl bg-white/5 p-3">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Saved Sessions</div>
-            <div className="mt-2 text-2xl font-semibold">{stats.totalSessions}</div>
+        <section className="premium-elevated mt-4 rounded-[28px] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] uppercase tracking-[0.28em] text-[var(--text-secondary)]">
+                <span className="pulse-ring h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
+                Session continuity ready
+              </div>
+              <h2 className="mt-3 text-[22px] font-semibold leading-[1.04] tracking-[-0.04em]">
+                Resume work with project memory already organized.
+              </h2>
+            </div>
+            <div className="rounded-[18px] border border-white/10 bg-black/10 px-3 py-2 text-right">
+              <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">Last active</div>
+              <div className="mt-1 text-sm font-semibold">{formatRelative(state.user.lastActiveAt)}</div>
+            </div>
           </div>
-          <div className="rounded-2xl bg-white/5 p-3">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Platforms Used</div>
-            <div className="mt-2 text-2xl font-semibold">{stats.platformsUsed}</div>
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <Metric label="Sessions" value={String(stats.sessions)} detail="saved context" />
+            <Metric label="Resumes" value={String(stats.resumes)} detail="handoffs done" />
+            <Metric label="Platforms" value={String(stats.platforms)} detail="tools covered" />
           </div>
         </section>
 
-        <section className="grid grid-cols-2 gap-3">
+        <section className="mt-4 grid grid-cols-2 gap-3">
           <button
-            onClick={() => void handleManualSave()}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-electric px-4 py-3 font-medium transition hover:bg-blue-400"
+            onClick={() => void handleSave()}
+            className="flex items-center justify-center gap-2 rounded-[22px] bg-[linear-gradient(135deg,#3b82f6,#1d4ed8)] px-4 py-3.5 font-semibold text-white"
           >
             <Save className="h-4 w-4" />
-            Save Current Chat
+            Save current chat
           </button>
           <button
-            onClick={() =>
-              void sendMessage<RuntimeResponse<SessionSummary[]>>({ type: 'FETCH_SESSIONS' }).then(refreshState)
-            }
-            className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-medium transition hover:border-electric"
+            onClick={() => void refreshState()}
+            className="flex items-center justify-center gap-2 rounded-[22px] border border-[var(--surface-border)] bg-[var(--surface-elevated)] px-4 py-3.5 font-semibold"
           >
             <RefreshCcw className="h-4 w-4" />
-            Refresh
+            Refresh sync
           </button>
         </section>
 
-        <section className="grid grid-cols-2 gap-3 text-sm">
-          <button
-            onClick={() => void togglePreference('autoCapture')}
-            className={`rounded-2xl px-3 py-3 text-left transition ${
-              state.preferences.autoCapture ? 'bg-emerald/20 text-emerald-100' : 'bg-white/5 text-slate-300'
-            }`}
-          >
-            Auto-capture
-          </button>
-          <button
-            onClick={() => void togglePreference('autoInject')}
-            className={`rounded-2xl px-3 py-3 text-left transition ${
-              state.preferences.autoInject ? 'bg-electric/20 text-blue-100' : 'bg-white/5 text-slate-300'
-            }`}
-          >
-            Auto-inject
-          </button>
+        <section className="premium-elevated mt-4 rounded-[24px] p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <ToggleCard
+              label="Auto-capture"
+              detail={state.preferences.autoCaptureTrigger === 'limit-detected' ? 'Limit detection' : 'Manual only'}
+              active={state.preferences.autoCapture}
+              onClick={() => void savePreferences({ autoCapture: !state.preferences.autoCapture })}
+            />
+            <ToggleCard
+              label="Auto-inject"
+              detail={state.preferences.autoInjectBehavior === 'always' ? 'Always restore' : 'Ask first'}
+              active={state.preferences.autoInject}
+              onClick={() => void savePreferences({ autoInject: !state.preferences.autoInject })}
+            />
+          </div>
         </section>
 
-        <section className="space-y-3">
+        <section className="mt-4 space-y-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search sessions"
-              className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-10 pr-3 text-sm text-white outline-none transition focus:border-electric"
+              placeholder="Search by project, tag, or next step"
+              className="premium-input pl-11"
             />
           </div>
-          <div className="flex gap-2 overflow-auto pb-1">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {platformOptions.map((platform) => (
               <button
                 key={platform}
+                data-active={platformFilter === platform}
                 onClick={() => setPlatformFilter(platform)}
-                className={`rounded-full px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] ${
-                  platformFilter === platform ? 'bg-electric text-white' : 'bg-white/5 text-slate-300'
-                }`}
+                className="segmented-pill shrink-0"
               >
-                {platform}
+                {platform === 'all' ? 'All tools' : platformMeta[platform].label}
               </button>
             ))}
           </div>
         </section>
 
-        <section className="flex-1 space-y-3 overflow-y-auto pr-1">
+        <section className="mt-4 flex-1 overflow-y-auto pr-1">
           {filteredSessions.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/5 p-6 text-center">
-              <Bot className="h-10 w-10 text-electric" />
-              <h2 className="mt-3 text-lg font-semibold">No passports yet</h2>
-              <p className="mt-2 text-sm text-slate-300">
-                Save your current AI chat or wait for auto-capture when a platform limit is detected.
+            <div className="premium-elevated flex h-full flex-col items-center justify-center rounded-[28px] p-6 text-center">
+              <Bot className="h-8 w-8 text-[var(--accent)]" />
+              <div className="mt-4 text-lg font-semibold">No passports in this view</div>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                Save the current chat or widen your filters to surface stored project continuity.
               </p>
             </div>
           ) : (
-            filteredSessions.map((session) => (
-              <article key={session.id} className="rounded-3xl border border-white/10 bg-white/5 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-electric">{session.platform}</div>
-                    <h2 className="mt-1 text-sm font-semibold">{session.title}</h2>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {session.messageCount} messages - {new Date(session.updatedAt).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={() => void handleResume(session.id)}
-                    className="flex-1 rounded-2xl bg-electric px-3 py-2 text-sm font-medium transition hover:bg-blue-400"
-                  >
-                    Resume
-                  </button>
-                  <button
-                    onClick={() => void handleExport(session.id)}
-                    className="rounded-2xl border border-white/10 px-3 py-2 text-slate-300 transition hover:border-white/20"
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => void handleDelete(session.id)}
-                    className="rounded-2xl border border-white/10 px-3 py-2 text-slate-300 transition hover:border-rose-400 hover:text-rose-200"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </article>
-            ))
+            <div className="space-y-3">
+              {filteredSessions.map((session) => (
+                <SessionCard
+                  key={session.id}
+                  session={session}
+                  onResume={() => void handleResume(session.id)}
+                  onExport={() => void handleExport(session.id)}
+                  onDelete={() => void handleDelete(session.id)}
+                />
+              ))}
+            </div>
           )}
         </section>
       </div>
     </div>
+  );
+};
+
+const Avatar = ({ user }: { user: UserProfile }) => (
+  user.photoURL ? (
+    <img src={user.photoURL} alt={user.displayName} className="h-10 w-10 rounded-full border border-white/10 object-cover" />
+  ) : (
+    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[var(--surface-elevated)] text-sm font-semibold">
+      {user.displayName.slice(0, 1).toUpperCase()}
+    </div>
+  )
+);
+
+const Metric = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
+  <div className="metric-tile">
+    <div className="text-[11px] uppercase tracking-[0.28em] text-[var(--text-muted)]">{label}</div>
+    <div className="mt-2 text-[22px] font-semibold tracking-[-0.04em]">{value}</div>
+    <div className="mt-1 text-xs text-[var(--text-secondary)]">{detail}</div>
+  </div>
+);
+
+const ToggleCard = ({
+  label,
+  detail,
+  active,
+  onClick,
+}: {
+  label: string;
+  detail: string;
+  active: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    onClick={onClick}
+    className={clsx(
+      'rounded-[22px] border p-3 text-left transition',
+      active ? 'border-blue-300/20 bg-[var(--accent-soft)]' : 'border-[var(--surface-border)] bg-black/10',
+    )}
+  >
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <div className="text-sm font-semibold">{label}</div>
+        <div className="mt-1 text-xs text-[var(--text-secondary)]">{detail}</div>
+      </div>
+      <div className={clsx('rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.24em]', active ? 'bg-black/20' : 'bg-white/5 text-[var(--text-muted)]')}>
+        {active ? 'On' : 'Off'}
+      </div>
+    </div>
+  </button>
+);
+
+const SessionCard = ({
+  session,
+  onResume,
+  onExport,
+  onDelete,
+}: {
+  session: SessionSummary;
+  onResume: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+}) => {
+  const meta = platformMeta[session.platform];
+
+  return (
+    <article className="premium-elevated rounded-[28px] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className={clsx('flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br text-sm font-semibold', meta.tone)}>
+            {meta.short}
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-white/10 bg-black/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--text-secondary)]">
+                {meta.label}
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">{formatRelative(session.updatedAt)}</span>
+            </div>
+            <h2 className="mt-2 text-[15px] font-semibold leading-6 tracking-[-0.02em]">{session.title}</h2>
+            <div className="mt-1 text-sm text-[var(--text-secondary)]">{session.entities.projectName}</div>
+          </div>
+        </div>
+        <div className="rounded-[18px] border border-white/10 bg-black/10 px-3 py-2 text-right">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">Messages</div>
+          <div className="mt-1 text-sm font-semibold">{session.messageCount}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-[20px] border border-white/10 bg-black/10 p-3">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">Where we left off</div>
+          <div className="mt-2 line-clamp-3 text-sm leading-6 text-[var(--text-secondary)]">{session.entities.lastAction}</div>
+        </div>
+        <div className="rounded-[20px] border border-white/10 bg-black/10 p-3">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">Next step</div>
+          <div className="mt-2 line-clamp-3 text-sm leading-6 text-[var(--text-secondary)]">{session.entities.nextStep}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {session.tags.slice(0, 4).map((tag) => (
+          <span key={tag} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--text-secondary)]">
+            {tag}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-4 grid grid-cols-[1fr_auto_auto] gap-2">
+        <button
+          onClick={onResume}
+          className="flex items-center justify-center gap-2 rounded-[20px] bg-[linear-gradient(135deg,#3b82f6,#1d4ed8)] px-4 py-3 text-sm font-semibold text-white"
+        >
+          Resume session
+          <ArrowRight className="h-4 w-4" />
+        </button>
+        <button onClick={onExport} className="rounded-[20px] border border-[var(--surface-border)] bg-[var(--surface-elevated)] px-3 py-3">
+          <Download className="h-4 w-4" />
+        </button>
+        <button onClick={onDelete} className="rounded-[20px] border border-[var(--surface-border)] bg-[var(--surface-elevated)] px-3 py-3">
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+    </article>
   );
 };

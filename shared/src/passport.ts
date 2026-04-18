@@ -8,7 +8,7 @@ export const formatPassport = (
 ) => {
   return [
     PASSPORT_DIVIDER,
-    'CONTEXT PASSPORT - ContextPassport',
+    'CONTEXT PASSPORT — ContextPassport',
     PASSPORT_DIVIDER,
     `Previous Platform: ${platform}`,
     `Session Date: ${date}`,

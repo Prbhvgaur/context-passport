@@ -3,7 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import pinoHttp from 'pino-http';
+import { pinoHttp } from 'pino-http';
 import swaggerUi from 'swagger-ui-express';
 import { API_PREFIX } from '@context-passport/shared';
 import { env } from './config/env.js';
@@ -69,4 +69,3 @@ export const createApp = () => {
   app.use(errorHandler);
   return app;
 };
-

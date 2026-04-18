@@ -1,5 +1,7 @@
 import {
   getFromStorage,
+  getGoogleAccessToken,
+  isExtensionApiAvailable,
   queryActiveTab,
   removeFromStorage,
   sendMessage,
@@ -19,6 +21,7 @@ const chrome = globalThis.chrome;
 
 describe('chrome utils and storage', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     (chrome.storage.local.get as unknown as jest.Mock).mockImplementation(
       async (key?: string | string[]) => {
       if (key === STORAGE_KEYS.preferences) {
@@ -84,5 +87,54 @@ describe('chrome utils and storage', () => {
 
     expect(chrome.storage.local.set).toHaveBeenCalled();
     expect(chrome.storage.local.remove).toHaveBeenCalledWith(STORAGE_KEYS.authToken);
+  });
+
+  it('falls back to preview runtime when extension APIs are unavailable', async () => {
+    const originalChrome = globalThis.chrome;
+
+    Object.defineProperty(globalThis, 'chrome', {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+
+    window.localStorage.setItem('broken-json', '{');
+
+    expect(isExtensionApiAvailable()).toBe(false);
+    expect(await getFromStorage('broken-json')).toBeNull();
+
+    await setInStorage('preview-key', { preview: true });
+    expect(window.localStorage.getItem('preview-key')).toBe(JSON.stringify({ preview: true }));
+    expect(await getFromStorage('preview-key')).toEqual({ preview: true });
+
+    await removeFromStorage('preview-key');
+    expect(window.localStorage.getItem('preview-key')).toBeNull();
+
+    const appState = await sendMessage<{ success: boolean; data: { sessions: unknown[] } }>({ type: 'GET_APP_STATE' });
+    expect(appState.success).toBe(true);
+    expect(appState.data.sessions.length).toBeGreaterThan(0);
+
+    expect(await queryActiveTab()).toBeNull();
+    expect(await getGoogleAccessToken()).toBe('preview-token');
+    await expect(sendMessageToTab(99, { type: 'PING_TAB' })).rejects.toThrow(
+      'No active extension tab available for preview message to tab 99.',
+    );
+
+    Object.defineProperty(globalThis, 'chrome', {
+      configurable: true,
+      value: originalChrome,
+      writable: true,
+    });
+  });
+
+  it('handles empty chrome results and auth token edge cases', async () => {
+    (chrome.tabs.query as unknown as jest.Mock).mockResolvedValue([]);
+    (chrome.identity.getAuthToken as unknown as jest.Mock).mockResolvedValueOnce('token-123');
+
+    expect(await queryActiveTab()).toBeNull();
+    expect(await getGoogleAccessToken()).toBe('token-123');
+
+    (chrome.identity.getAuthToken as unknown as jest.Mock).mockResolvedValueOnce({ token: 'invalid-shape' });
+    expect(await getGoogleAccessToken()).toBe('');
   });
 });
