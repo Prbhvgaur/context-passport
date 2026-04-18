@@ -4,6 +4,7 @@ import { defineConfig } from 'vite';
 const root = __dirname;
 
 export default defineConfig({
+  base: './',
   resolve: {
     alias: {
       '@': resolve(root, 'src'),

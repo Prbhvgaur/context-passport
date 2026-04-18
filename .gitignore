@@ -14,3 +14,5 @@ firebase-debug.log
 .idea
 .vscode
 release
+demo
+public/demo

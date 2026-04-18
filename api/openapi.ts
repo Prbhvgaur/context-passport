@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { getRequestOrigin, renderDocsHtml } from '../src/public-site.js';
+import { buildOpenApiSpec, getRequestOrigin } from '../src/public-site.js';
 
 export default function handler(req: IncomingMessage, res: ServerResponse) {
   const origin = getRequestOrigin(req);
 
   res.statusCode = 200;
-  res.setHeader('content-type', 'text/html; charset=utf-8');
-  res.end(renderDocsHtml(origin));
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(buildOpenApiSpec(origin)));
 }
