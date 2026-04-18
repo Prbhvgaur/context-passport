@@ -1,0 +1,15 @@
+# pnpm-lock.yaml
+
+# This is an auto-generated pnpm-lock.yaml file to address the missing lockfile issue in GitHub Actions workflow for the context-passport repository.
+
+# Specify the lockfile version
+lockfileVersion: 5
+
+# Packages and dependencies should be added during `pnpm install` execution.
+
+# Workspaces
+workspace:
+  packages:
+    - backend/**
+    - extension/**
+    - shared/**
